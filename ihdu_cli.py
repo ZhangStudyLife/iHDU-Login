@@ -15,26 +15,15 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Dict, List, Optional
 
 import requests
 
-
-BASE_URL = os.environ.get("IHDU_BASE_URL", "").rstrip("/")
-DEFAULT_AC_ID = os.environ.get("IHDU_AC_ID", "")
-FALLBACK_BASE_URL = os.environ.get("IHDU_FALLBACK_BASE_URL", "https://login.hdu.edu.cn").rstrip("/")
-FALLBACK_AC_ID = os.environ.get("IHDU_FALLBACK_AC_ID", "32")
-DEFAULT_INTERVAL = int(os.environ.get("IHDU_INTERVAL", "30"))
-DEFAULT_TIMEOUT = float(os.environ.get("IHDU_TIMEOUT", "5"))
-DEFAULT_SSID = os.environ.get("IHDU_SSID", "i-HDU")
-SRBX1_ALPHA = "LVoJPiCN2R8G90yg+hmFHuacZ1OWMnrsSTXkYpUq/3dlbfKwv6xztjI7DeBE45QA"
-STD_BASE64_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-PORTAL_PROBE_URLS = [
-    "http://www.msftconnecttest.com/connecttest.txt",
-    "http://connect.rom.miui.com/generate_204",
-    "http://example.com",
-]
+BASE_URL = "https://login.hdu.edu.cn"
+AC_ID = "32"
+DEFAULT_INTERVAL = 30
+DEFAULT_TIMEOUT = 5.0
+DEFAULT_SSID = "i-HDU"
 WINDOWS_OPEN_WIFI_PROFILE = """<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
     <name>{ssid}</name>
@@ -57,9 +46,8 @@ WINDOWS_OPEN_WIFI_PROFILE = """<?xml version="1.0"?>
 </WLANProfile>
 """
 
-
-def normalize_base_url(url: str) -> str:
-    return url.rstrip("/")
+SRBX1_ALPHA = "LVoJPiCN2R8G90yg+hmFHuacZ1OWMnrsSTXkYpUq/3dlbfKwv6xztjI7DeBE45QA"
+STD_BASE64_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 
 def parse_jsonp(payload: str) -> Dict[str, Any]:
@@ -210,28 +198,8 @@ def build_login_params(
     }
 
 
-def detect_portal_device(
-    system_name: Optional[str] = None,
-    release_name: Optional[str] = None,
-) -> Tuple[str, str]:
-    system_name = system_name or platform.system()
-    release_name = release_name or platform.release()
-
-    if system_name == "Darwin":
-        return "Mac OS", "Macintosh"
-    if system_name == "Windows":
-        version = f" {release_name}" if release_name else ""
-        return f"Windows{version}", "Windows"
-    return "Linux", "Linux"
-
-
-def detect_user_agent(
-    system_name: Optional[str] = None,
-    release_name: Optional[str] = None,
-) -> str:
-    system_name = system_name or platform.system()
-    release_name = release_name or platform.release()
-
+def detect_user_agent() -> str:
+    system_name = platform.system()
     if system_name == "Darwin":
         return (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -239,11 +207,8 @@ def detect_user_agent(
             "Chrome/146.0.0.0 Safari/537.36"
         )
     if system_name == "Windows":
-        windows_nt = "10.0"
-        if release_name == "7":
-            windows_nt = "6.1"
         return (
-            f"Mozilla/5.0 (Windows NT {windows_nt}; Win64; x64) "
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/146.0.0.0 Safari/537.36"
         )
@@ -254,8 +219,15 @@ def detect_user_agent(
     )
 
 
-def command_requires_credentials(command: str) -> bool:
-    return command in {"login", "watch"}
+def infer_ipv4_address() -> Optional[str]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("223.5.5.5", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        sock.close()
 
 
 def run_command(command: List[str], timeout: float = 15) -> subprocess.CompletedProcess:
@@ -271,12 +243,22 @@ def run_command(command: List[str], timeout: float = 15) -> subprocess.Completed
     return subprocess.run(**kwargs)
 
 
-def _command_missing_message(command_name: str) -> str:
-    return f"系统中未找到命令 `{command_name}`，无法自动连接 Wi-Fi。"
+def get_macos_wifi_device() -> Optional[str]:
+    result = run_command(["networksetup", "-listallhardwareports"])
+    if result.returncode != 0:
+        return None
+    hardware_port = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("Hardware Port:"):
+            hardware_port = line.split(":", 1)[1].strip()
+            continue
+        if hardware_port in {"Wi-Fi", "AirPort"} and line.startswith("Device:"):
+            return line.split(":", 1)[1].strip()
+    return None
 
 
-def get_connected_ssid(system_name: Optional[str] = None) -> Optional[str]:
-    system_name = system_name or platform.system()
+def get_connected_ssid() -> Optional[str]:
+    system_name = platform.system()
 
     if system_name == "Windows":
         result = run_command(["netsh", "wlan", "show", "interfaces"])
@@ -286,7 +268,7 @@ def get_connected_ssid(system_name: Optional[str] = None) -> Optional[str]:
             if "BSSID" in line:
                 continue
             match = re.search(r"^\s*SSID\s*:\s*(.+?)\s*$", line)
-            if match and match.group(1) and match.group(1) != "":  # pragma: no branch
+            if match and match.group(1) and match.group(1) != "":
                 return match.group(1)
         return None
 
@@ -311,20 +293,6 @@ def get_connected_ssid(system_name: Optional[str] = None) -> Optional[str]:
     return None
 
 
-def get_macos_wifi_device() -> Optional[str]:
-    result = run_command(["networksetup", "-listallhardwareports"])
-    if result.returncode != 0:
-        return None
-    hardware_port = ""
-    for line in result.stdout.splitlines():
-        if line.startswith("Hardware Port:"):
-            hardware_port = line.split(":", 1)[1].strip()
-            continue
-        if hardware_port in {"Wi-Fi", "AirPort"} and line.startswith("Device:"):
-            return line.split(":", 1)[1].strip()
-    return None
-
-
 def _ensure_windows_open_profile(ssid: str) -> None:
     profiles = run_command(["netsh", "wlan", "show", "profiles"])
     if profiles.returncode == 0 and ssid in profiles.stdout:
@@ -344,11 +312,11 @@ def _ensure_windows_open_profile(ssid: str) -> None:
             os.remove(profile_path)
 
 
-def ensure_wifi_connected(ssid: str, system_name: Optional[str] = None) -> bool:
-    system_name = system_name or platform.system()
-    current_ssid = get_connected_ssid(system_name=system_name)
-    if current_ssid == ssid:
+def ensure_wifi_connected(ssid: str) -> bool:
+    if get_connected_ssid() == ssid:
         return False
+
+    system_name = platform.system()
 
     if system_name == "Windows":
         _ensure_windows_open_profile(ssid)
@@ -367,70 +335,11 @@ def ensure_wifi_connected(ssid: str, system_name: Optional[str] = None) -> bool:
         return True
 
     if shutil.which("nmcli") is None:
-        raise RuntimeError(_command_missing_message("nmcli"))
+        raise RuntimeError(f"系统中未找到命令 `nmcli`，无法自动连接 Wi-Fi。")
     result = run_command(["nmcli", "device", "wifi", "connect", ssid])
     if result.returncode != 0:
         raise RuntimeError(f"连接 Wi-Fi 失败：{result.stderr.strip() or result.stdout.strip()}")
     return True
-
-
-def detect_portal_from_url(url: str) -> Optional[Tuple[str, str]]:
-    if not url:
-        return None
-    parsed = urlparse(url.strip())
-    if not parsed.scheme or not parsed.netloc:
-        return None
-
-    base_url = f"{parsed.scheme}://{parsed.netloc}"
-    query = parse_qs(parsed.query)
-    if query.get("ac_id"):
-        return base_url, query["ac_id"][0]
-
-    path_match = re.search(r"/index_(\d+)\.html?$", parsed.path)
-    if path_match:
-        return base_url, path_match.group(1)
-
-    return None
-
-
-def extract_redirect_url(text: str) -> Optional[str]:
-    if not text:
-        return None
-
-    patterns = [
-        r'url\s*=\s*["\']?([^"\' >]+)',
-        r'location(?:\.href)?\s*=\s*["\']([^"\']+)["\']',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.I)
-        if match:
-            return html.unescape(match.group(1))
-    return None
-
-
-def probe_portal(
-    timeout: float = DEFAULT_TIMEOUT,
-    session: Optional[requests.Session] = None,
-) -> Optional[Tuple[str, str]]:
-    requester = session or requests.Session()
-    headers = {"User-Agent": detect_user_agent()}
-
-    for probe_url in PORTAL_PROBE_URLS:
-        try:
-            response = requester.get(probe_url, timeout=timeout, allow_redirects=True, headers=headers)
-        except Exception:
-            continue
-
-        candidates = [
-            response.headers.get("Location", ""),
-            response.url,
-            extract_redirect_url(response.text),
-        ]
-        for candidate in candidates:
-            detected = detect_portal_from_url(candidate or "")
-            if detected:
-                return detected
-    return None
 
 
 def summarize_status(payload: Dict[str, Any]) -> str:
@@ -450,109 +359,39 @@ def summarize_login(payload: Dict[str, Any]) -> str:
     return f"登录成功，账号：{username}，IP：{online_ip}，网关返回：{message}"
 
 
-def infer_ipv4_address() -> Optional[str]:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.connect(("223.5.5.5", 80))
-        return sock.getsockname()[0]
-    except OSError:
-        return None
-    finally:
-        sock.close()
-
-
 class IHDUClient:
-    def __init__(
-        self,
-        username: str,
-        password: str,
-        base_url: str = BASE_URL,
-        ac_id: str = DEFAULT_AC_ID,
-        ip: Optional[str] = None,
-        timeout: float = DEFAULT_TIMEOUT,
-        os_name: Optional[str] = None,
-        platform_name: Optional[str] = None,
-        ssid: str = DEFAULT_SSID,
-        auto_wifi: bool = True,
-        auto_detect: bool = True,
-    ) -> None:
+    def __init__(self, username: str, password: str) -> None:
         self.username = username
         self.password = password
-        self.base_url = normalize_base_url(base_url) if base_url else ""
-        self.ac_id = str(ac_id) if ac_id else ""
-        self.ip = ip
-        self.timeout = timeout
-        self.ssid = ssid
-        self.auto_wifi = auto_wifi
-        self.auto_detect = auto_detect
+        self.base_url = BASE_URL
+        self.ac_id = AC_ID
+        self.ip: Optional[str] = None
+        self.timeout = DEFAULT_TIMEOUT
 
-        detected_from_url = detect_portal_from_url(self.base_url)
-        if detected_from_url:
-            self.base_url = detected_from_url[0]
-            if not self.ac_id:
-                self.ac_id = detected_from_url[1]
-
-        detected_os, detected_platform = detect_portal_device()
-        self.os_name = os_name or detected_os
-        self.platform_name = platform_name or detected_platform
+        system_name = platform.system()
+        if system_name == "Darwin":
+            self.os_name = "Mac OS"
+            self.platform_name = "Macintosh"
+        elif system_name == "Windows":
+            self.os_name = f"Windows {platform.release()}"
+            self.platform_name = "Windows"
+        else:
+            self.os_name = "Linux"
+            self.platform_name = "Linux"
 
         self.session = requests.Session()
-        self._refresh_headers()
-
-    def _refresh_headers(self) -> None:
-        referer_base = self.base_url or FALLBACK_BASE_URL
-        referer_ac_id = self.ac_id or DEFAULT_AC_ID or FALLBACK_AC_ID
         self.session.headers.update(
             {
                 "User-Agent": detect_user_agent(),
-                "Referer": f"{referer_base}/srun_portal_pc?ac_id={referer_ac_id}&theme=pro",
+                "Referer": f"{self.base_url}/srun_portal_pc?ac_id={self.ac_id}&theme=pro",
                 "Accept": "text/javascript, application/javascript, */*; q=0.01",
             }
         )
-
-    def _ensure_network(self) -> None:
-        if self.ip:
-            return
-        inferred_ip = infer_ipv4_address()
-        if inferred_ip:
-            self.ip = inferred_ip
-            return
-
-        if not self.auto_wifi:
-            raise RuntimeError("当前未联网，请先连接到 i-HDU。")
-
-        changed = ensure_wifi_connected(self.ssid)
-        if changed:
-            time.sleep(2)
-
-        inferred_ip = infer_ipv4_address()
-        if not inferred_ip:
-            raise RuntimeError(f"已尝试连接 Wi-Fi `{self.ssid}`，但仍未获取到本机 IP。")
-        self.ip = inferred_ip
-
-    def _ensure_portal_config(self) -> None:
-        if self.base_url and self.ac_id:
-            return
-
-        detected = probe_portal(timeout=self.timeout, session=self.session) if self.auto_detect else None
-        if detected:
-            if not self.base_url:
-                self.base_url = detected[0]
-            if not self.ac_id:
-                self.ac_id = detected[1]
-
-        if not self.base_url:
-            self.base_url = FALLBACK_BASE_URL
-        if not self.ac_id:
-            self.ac_id = DEFAULT_AC_ID or FALLBACK_AC_ID
-        self.base_url = normalize_base_url(self.base_url)
-        self._refresh_headers()
 
     def _callback(self) -> str:
         return f"jQuery{int(time.time() * 1000)}_{random.randint(100000, 999999)}"
 
     def _jsonp_get(self, path: str, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        self._ensure_portal_config()
         query = dict(params or {})
         query["callback"] = self._callback()
         query["_"] = str(int(time.time() * 1000))
@@ -563,9 +402,19 @@ class IHDUClient:
     def resolve_ip(self) -> str:
         if self.ip:
             return self.ip
-        self._ensure_network()
-        if not self.ip:
-            raise RuntimeError("未获取到本机 IP，请确认设备已连接到网络。")
+        ip = infer_ipv4_address()
+        if ip:
+            self.ip = ip
+            return self.ip
+
+        changed = ensure_wifi_connected(DEFAULT_SSID)
+        if changed:
+            time.sleep(2)
+
+        ip = infer_ipv4_address()
+        if not ip:
+            raise RuntimeError(f"已尝试连接 Wi-Fi `{DEFAULT_SSID}`，但仍未获取到本机 IP。")
+        self.ip = ip
         return self.ip
 
     def status(self) -> Dict[str, Any]:
@@ -629,87 +478,40 @@ class IHDUClient:
             time.sleep(interval)
 
 
-def _read_credentials(args: argparse.Namespace) -> Tuple[str, str]:
-    username = args.username or os.environ.get("IHDU_USERNAME")
-    password = args.password or os.environ.get("IHDU_PASSWORD")
-
-    if not username:
-        username = input("请输入校园网账号: ").strip()
-    if not password:
-        password = getpass.getpass("请输入校园网密码: ").strip()
-
-    if not username or not password:
-        raise SystemExit("账号或密码为空，无法继续登录。")
-    return username, password
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="i-HDU 校园网命令行登录工具，支持自动连接 Wi-Fi 与自动探测门户地址。")
-    parser.add_argument("--base-url", default=BASE_URL, help="门户地址，不填则自动探测。")
-    parser.add_argument("--ac-id", default=DEFAULT_AC_ID, help="门户 ac_id，不填则自动探测。")
-    parser.add_argument("--ip", help="手动指定登录使用的 IPv4 地址。")
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="请求超时秒数。")
-    parser.add_argument("--username", help="校园网账号。")
-    parser.add_argument("--password", help="校园网密码。")
-    parser.add_argument("--os-name", help="覆盖登录请求中的 os 字段。")
-    parser.add_argument("--platform-name", help="覆盖登录请求中的 name 字段。")
-    parser.add_argument("--ssid", default=DEFAULT_SSID, help="需要自动连接的 Wi-Fi 名称，默认是 i-HDU。")
-    parser.add_argument("--no-auto-wifi", action="store_true", help="禁用登录前自动连接 Wi-Fi。")
-    parser.add_argument("--no-auto-detect", action="store_true", help="禁用门户地址自动探测。")
-    parser.add_argument("--json", action="store_true", help="输出原始 JSON，而不是中文摘要。")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="i-HDU 校园网命令行登录工具")
+    parser.add_argument("--username", help="校园网账号")
+    parser.add_argument("--password", help="校园网密码")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("status", help="查询当前在线状态。")
-    subparsers.add_parser("login", help="执行一次登录。")
-    watch_parser = subparsers.add_parser("watch", help="持续检测网络状态，掉线后自动重登。")
-    watch_parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL, help="检测间隔秒数。")
-    return parser
+    subparsers.add_parser("status", help="查询当前在线状态")
+    subparsers.add_parser("login", help="执行一次登录")
+    watch_parser = subparsers.add_parser("watch", help="持续检测，掉线自动重登")
+    watch_parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL, help=f"检测间隔秒数，默认 {DEFAULT_INTERVAL}")
 
-
-def main() -> int:
-    parser = _build_parser()
     args = parser.parse_args()
 
     username = ""
     password = ""
-    if command_requires_credentials(args.command):
-        username, password = _read_credentials(args)
+    if args.command in {"login", "watch"}:
+        username = args.username or input("请输入校园网账号: ").strip()
+        password = args.password or getpass.getpass("请输入校园网密码: ").strip()
+        if not username or not password:
+            raise SystemExit("账号或密码为空，无法继续登录。")
 
-    client = IHDUClient(
-        username=username,
-        password=password,
-        base_url=args.base_url,
-        ac_id=args.ac_id,
-        ip=args.ip,
-        timeout=args.timeout,
-        os_name=args.os_name,
-        platform_name=args.platform_name,
-        ssid=args.ssid,
-        auto_wifi=not args.no_auto_wifi,
-        auto_detect=not args.no_auto_detect,
-    )
+    client = IHDUClient(username=username, password=password)
 
     try:
         if args.command == "status":
-            payload = client.status()
-            if args.json:
-                print(json.dumps(payload, ensure_ascii=False, indent=2))
-            else:
-                print(summarize_status(payload))
+            print(summarize_status(client.status()))
             return 0
 
         if args.command == "login":
             payload = client.login()
-            if args.json:
-                print(json.dumps(payload, ensure_ascii=False, indent=2))
-            else:
-                print(summarize_login(payload))
-                print(f"实际使用的门户地址：{client.base_url}，ac_id：{client.ac_id}")
+            print(summarize_login(payload))
             return 0
 
         if args.command == "watch":
-            if not args.json:
-                print(f"开始监控网络，目标 Wi-Fi：{args.ssid}。")
             client.watch(args.interval)
             return 0
 
