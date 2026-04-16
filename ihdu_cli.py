@@ -38,11 +38,12 @@ except Exception:
 
 try:
     import pystray
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
 except Exception:
     pystray = None
     Image = None
     ImageDraw = None
+    ImageFont = None
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -646,6 +647,18 @@ class AutoStartManager:
         appdata = os.environ.get("APPDATA", "")
         return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "ihdu-login.bat"
 
+    def _escape_windows_batch_arg(self, value: str) -> str:
+        escaped = (
+            value.replace("^", "^^")
+            .replace("%", "%%")
+            .replace("&", "^&")
+            .replace("|", "^|")
+            .replace("<", "^<")
+            .replace(">", "^>")
+            .replace('"', '""')
+        )
+        return f'"{escaped}"'
+
     def _linux_path(self) -> Path:
         return Path.home() / ".config" / "autostart" / "ihdu-login.desktop"
 
@@ -666,8 +679,10 @@ class AutoStartManager:
             path = self._windows_path()
             if enabled:
                 path.parent.mkdir(parents=True, exist_ok=True)
+                python_arg = self._escape_windows_batch_arg(self.python_path)
+                script_arg = self._escape_windows_batch_arg(self.script_path)
                 path.write_text(
-                    f'@echo off\nstart "" "{self.python_path}" "{self.script_path}" ui --headless\n',
+                    f"@echo off\nstart \"\" {python_arg} {script_arg} ui --headless\n",
                     encoding="utf-8",
                 )
             elif path.exists():
@@ -957,11 +972,16 @@ class IHDUUiApp:
             fill="#2563eb",
         )
         text = "H"
-        text_box = draw.textbbox((0, 0), text)
-        text_width = text_box[2] - text_box[0]
-        text_height = text_box[3] - text_box[1]
-        text_x = (TRAY_ICON_SIZE - text_width) // 2
-        text_y = (TRAY_ICON_SIZE - text_height) // 2
+        font = ImageFont.load_default() if ImageFont is not None else None
+        try:
+            text_box = draw.textbbox((0, 0), text, font=font)
+            text_width = text_box[2] - text_box[0]
+            text_height = text_box[3] - text_box[1]
+            text_x = (TRAY_ICON_SIZE - text_width) // 2
+            text_y = (TRAY_ICON_SIZE - text_height) // 2
+        except Exception:
+            text_x = TRAY_ICON_SIZE // 2 - 4
+            text_y = TRAY_ICON_SIZE // 2 - 6
         draw.text((text_x, text_y), text, fill="white")
 
         def show_window(icon: Any = None, item: Any = None) -> None:
