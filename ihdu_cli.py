@@ -655,7 +655,6 @@ class AutoStartManager:
             .replace("|", "^|")
             .replace("<", "^<")
             .replace(">", "^>")
-            .replace('"', '""')
         )
         return f'"{escaped}"'
 
