@@ -44,6 +44,16 @@ except Exception:
     Image = None
     ImageDraw = None
 
+try:
+    from cryptography.fernet import Fernet, InvalidToken
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+except Exception:
+    Fernet = None
+    InvalidToken = Exception
+    PBKDF2HMAC = None
+    hashes = None
+
 BASE_URL = "https://login.hdu.edu.cn"
 AC_ID = "32"
 DEFAULT_INTERVAL = 30
@@ -53,6 +63,8 @@ CONFIG_DIR = Path.home() / ".ihdu_login"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 FALLBACK_SECRET_FILE = CONFIG_DIR / "secret.bin"
 KEYRING_SERVICE = "iHDU-Login"
+TRAY_ICON_SIZE = 64
+TRAY_ICON_PADDING = 8
 WINDOWS_OPEN_WIFI_PROFILE = """<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
     <name>{ssid}</name>
@@ -541,27 +553,23 @@ class CredentialStore:
         with self.config_file.open("w", encoding="utf-8") as handle:
             json.dump(config, handle, ensure_ascii=False, indent=2)
 
-    def _derive_key(self, username: str) -> bytes:
+    def _derive_key(self, username: str, salt: bytes) -> bytes:
+        if PBKDF2HMAC is None or hashes is None:
+            raise RuntimeError("缺少 cryptography 依赖，无法执行本地加密存储。")
         seed = f"{platform.system()}|{platform.node()}|{uuid.getnode()}|{username}".encode("utf-8")
-        return hashlib.pbkdf2_hmac("sha256", seed, b"ihdu-login-fallback-salt-v1", 120000, dklen=32)
-
-    def _xor_cipher(self, raw: bytes, key: bytes, nonce: bytes) -> bytes:
-        output = bytearray()
-        counter = 0
-        while len(output) < len(raw):
-            block = hashlib.sha256(key + nonce + counter.to_bytes(4, "big")).digest()
-            output.extend(block)
-            counter += 1
-        return bytes(a ^ b for a, b in zip(raw, output[: len(raw)]))
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=390000)
+        return base64.urlsafe_b64encode(kdf.derive(seed))
 
     def _save_fallback_password(self, username: str, password: str) -> None:
+        if Fernet is None:
+            raise RuntimeError("缺少 cryptography 依赖，无法执行本地加密存储。")
         self._ensure_dir()
-        nonce = os.urandom(16)
-        key = self._derive_key(username)
-        cipher = self._xor_cipher(password.encode("utf-8"), key, nonce)
+        salt = os.urandom(16)
+        key = self._derive_key(username, salt)
+        cipher = Fernet(key).encrypt(password.encode("utf-8"))
         payload = {
             "username": username,
-            "nonce": base64.b64encode(nonce).decode("ascii"),
+            "salt": base64.b64encode(salt).decode("ascii"),
             "cipher": base64.b64encode(cipher).decode("ascii"),
         }
         with self.fallback_secret_file.open("w", encoding="utf-8") as handle:
@@ -575,11 +583,15 @@ class CredentialStore:
                 payload = json.load(handle)
             if payload.get("username") != username:
                 return ""
-            nonce = base64.b64decode(payload["nonce"])
+            if Fernet is None:
+                return ""
+            salt = base64.b64decode(payload["salt"])
             cipher = base64.b64decode(payload["cipher"])
-            key = self._derive_key(username)
-            plain = self._xor_cipher(cipher, key, nonce)
+            key = self._derive_key(username, salt)
+            plain = Fernet(key).decrypt(cipher)
             return plain.decode("utf-8")
+        except InvalidToken:
+            return ""
         except Exception:
             return ""
 
@@ -845,7 +857,7 @@ class IHDUUiApp:
 
     def _save_config(self) -> bool:
         username = self.username_var.get().strip()
-        password = self.password_var.get().strip()
+        password = self.password_var.get()
         try:
             interval = max(5, int(self.interval_var.get().strip()))
             self.interval_var.set(str(interval))
@@ -869,7 +881,7 @@ class IHDUUiApp:
             }
         )
         self.store.set_password(username, password)
-        self.password_var.set(password)
+        self.password_var.set("")
         try:
             self.autostart.set_enabled(bool(self.autostart_var.get()))
         except Exception as exc:
@@ -914,10 +926,25 @@ class IHDUUiApp:
             return False
         if self.tray_icon is not None:
             return True
-        icon_image = Image.new("RGB", (64, 64), "#1e293b")
+        icon_image = Image.new("RGB", (TRAY_ICON_SIZE, TRAY_ICON_SIZE), "#1e293b")
         draw = ImageDraw.Draw(icon_image)
-        draw.rounded_rectangle((8, 8, 56, 56), radius=12, fill="#2563eb")
-        draw.text((22, 20), "H", fill="white")
+        draw.rounded_rectangle(
+            (
+                TRAY_ICON_PADDING,
+                TRAY_ICON_PADDING,
+                TRAY_ICON_SIZE - TRAY_ICON_PADDING,
+                TRAY_ICON_SIZE - TRAY_ICON_PADDING,
+            ),
+            radius=12,
+            fill="#2563eb",
+        )
+        text = "H"
+        text_box = draw.textbbox((0, 0), text)
+        text_width = text_box[2] - text_box[0]
+        text_height = text_box[3] - text_box[1]
+        text_x = (TRAY_ICON_SIZE - text_width) // 2
+        text_y = (TRAY_ICON_SIZE - text_height) // 2
+        draw.text((text_x, text_y), text, fill="white")
 
         def show_window(icon: Any = None, item: Any = None) -> None:
             self.root.after(0, self._restore_from_tray)
@@ -989,7 +1016,7 @@ def main() -> int:
     password = ""
     if args.command in {"login", "watch"}:
         username = args.username or input("请输入校园网账号: ").strip()
-        password = args.password or getpass.getpass("请输入校园网密码: ").strip()
+        password = args.password if args.password is not None else getpass.getpass("请输入校园网密码: ")
         if not username or not password:
             raise SystemExit("账号或密码为空，无法继续登录。")
 
