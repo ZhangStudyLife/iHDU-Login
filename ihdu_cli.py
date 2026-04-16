@@ -558,14 +558,14 @@ class CredentialStore:
 
     def _derive_key(self, username: str, salt: bytes) -> bytes:
         if PBKDF2HMAC is None or hashes is None:
-            raise RuntimeError("缺少 cryptography 依赖，无法执行本地加密存储。")
+            raise RuntimeError("缺少 cryptography 依赖库，请运行 pip install cryptography 后重试。")
         seed = f"{platform.system()}|{platform.node()}|{uuid.getnode()}|{username}".encode("utf-8")
         kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=PBKDF2_ITERATIONS)
         return base64.urlsafe_b64encode(kdf.derive(seed))
 
     def _save_fallback_password(self, username: str, password: str) -> None:
         if Fernet is None:
-            raise RuntimeError("缺少 cryptography 依赖，无法执行本地加密存储。")
+            raise RuntimeError("缺少 cryptography 依赖库，请运行 pip install cryptography 后重试。")
         self._ensure_dir()
         salt = os.urandom(16)
         key = self._derive_key(username, salt)
@@ -780,7 +780,7 @@ class AuthWorker:
 class IHDUUiApp:
     def __init__(self, headless: bool = False) -> None:
         if tk is None or ttk is None or messagebox is None:
-            raise RuntimeError("当前环境不支持 tkinter，无法启动 UI。")
+            raise RuntimeError("当前环境不支持 tkinter。请先安装 Python Tk 支持（例如 Ubuntu: sudo apt-get install python3-tk）。")
         self.root = tk.Tk()
         self.root.title("iHDU Login")
         self.root.geometry("620x420")
@@ -865,7 +865,7 @@ class IHDUUiApp:
             interval = max(MIN_RETRY_INTERVAL, int(self.interval_var.get().strip()))
             self.interval_var.set(str(interval))
         except Exception:
-            messagebox.showerror("配置错误", "轮询间隔必须是整数。")
+            messagebox.showerror("配置错误", f"轮询间隔必须是整数，且不小于 {MIN_RETRY_INTERVAL} 秒。")
             return False
         if not username:
             messagebox.showerror("配置错误", "账号不能为空。")
