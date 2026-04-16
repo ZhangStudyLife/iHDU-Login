@@ -65,6 +65,9 @@ FALLBACK_SECRET_FILE = CONFIG_DIR / "secret.bin"
 KEYRING_SERVICE = "iHDU-Login"
 TRAY_ICON_SIZE = 64
 TRAY_ICON_PADDING = 8
+PBKDF2_ITERATIONS = 600000
+MIN_RETRY_INTERVAL = 5
+MAX_RETRY_INTERVAL = 15
 WINDOWS_OPEN_WIFI_PROFILE = """<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
     <name>{ssid}</name>
@@ -557,7 +560,7 @@ class CredentialStore:
         if PBKDF2HMAC is None or hashes is None:
             raise RuntimeError("缺少 cryptography 依赖，无法执行本地加密存储。")
         seed = f"{platform.system()}|{platform.node()}|{uuid.getnode()}|{username}".encode("utf-8")
-        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=390000)
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=PBKDF2_ITERATIONS)
         return base64.urlsafe_b64encode(kdf.derive(seed))
 
     def _save_fallback_password(self, username: str, password: str) -> None:
@@ -699,7 +702,7 @@ class AuthWorker:
     def __init__(self, username: str, password: str, interval: int) -> None:
         self.username = username
         self.password = password
-        self.interval = max(5, int(interval))
+        self.interval = max(MIN_RETRY_INTERVAL, int(interval))
         self._events: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         self._stop_event = threading.Event()
         self._reconnect_event = threading.Event()
@@ -764,7 +767,7 @@ class AuthWorker:
                 else:
                     prefix = "未知错误"
                 self._emit("error", f"{prefix}：{message}")
-                wait_seconds = min(15, max(5, self.interval // 2))
+                wait_seconds = min(MAX_RETRY_INTERVAL, max(MIN_RETRY_INTERVAL, self.interval // 2))
 
             self._wait_with_interrupt(wait_seconds)
             if self._reconnect_event.is_set():
@@ -859,7 +862,7 @@ class IHDUUiApp:
         username = self.username_var.get().strip()
         password = self.password_var.get()
         try:
-            interval = max(5, int(self.interval_var.get().strip()))
+            interval = max(MIN_RETRY_INTERVAL, int(self.interval_var.get().strip()))
             self.interval_var.set(str(interval))
         except Exception:
             messagebox.showerror("配置错误", "轮询间隔必须是整数。")
@@ -881,6 +884,7 @@ class IHDUUiApp:
             }
         )
         self.store.set_password(username, password)
+        password = ""
         self.password_var.set("")
         try:
             self.autostart.set_enabled(bool(self.autostart_var.get()))
