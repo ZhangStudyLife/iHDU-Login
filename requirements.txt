@@ -1,2 +1,5 @@
 requests>=2.31,<3
 urllib3<2
+keyring>=25.6,<26
+pystray>=0.19.5,<0.20
+Pillow>=12.2.0,<13

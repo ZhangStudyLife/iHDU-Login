@@ -26,6 +26,28 @@ pip install -r requirements.txt
 
 ## 使用
 
+### 可视化 UI（推荐）
+
+首次输入账号密码后可自动保存配置，后台轮询检测并自动认证，支持手动“立即重连”。
+
+```bash
+python ihdu_cli.py ui
+```
+
+静默后台启动（适合开机自启）：
+
+```bash
+python ihdu_cli.py ui --headless
+```
+
+UI 特性：
+
+- 轻量 `tkinter + ttk` 界面，低资源占用
+- 账号、轮询间隔、开机自启配置持久化
+- 密码优先写入系统钥匙串；不可用时回退本地加密存储（不明文落盘）
+- 后台线程自动检测在线状态，离线自动认证
+- 支持关闭窗口后最小化到托盘继续运行
+
 ### 登录
 
 ```bash
@@ -63,6 +85,12 @@ python ihdu_cli.py --username 你的学号 --password 你的密码 watch --inter
 
 按 `Ctrl + C` 随时停止。
 
+### 命令总览
+
+```bash
+python ihdu_cli.py {status,login,watch,ui} -h
+```
+
 ## 常见问题
 
 **Q: 提示"未获取到本机 IP"**
@@ -76,6 +104,14 @@ A: 需要安装 NetworkManager：`sudo apt install network-manager`
 **Q: 登录失败，返回 error**
 
 A: 检查学号和密码是否正确，确认当前连的是 `i-HDU` 而非其他网络。
+
+**Q: UI 里密码会明文保存吗？**
+
+A: 不会。程序优先保存到系统钥匙串（`keyring`）；钥匙串不可用时才回退本地加密存储。
+
+**Q: 托盘功能不可用怎么办？**
+
+A: 请确认已安装 `pystray` 和 `Pillow`，并且系统桌面环境支持托盘图标。
 
 ## 工作原理
 
