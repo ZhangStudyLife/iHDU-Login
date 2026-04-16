@@ -527,6 +527,7 @@ class CredentialStore:
         self.config_dir = CONFIG_DIR
         self.config_file = CONFIG_FILE
         self.fallback_secret_file = FALLBACK_SECRET_FILE
+        self.device_key_file = self.config_dir / "device.key"
 
     def _ensure_dir(self) -> None:
         self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -556,10 +557,24 @@ class CredentialStore:
         with self.config_file.open("w", encoding="utf-8") as handle:
             json.dump(config, handle, ensure_ascii=False, indent=2)
 
+    def _device_secret(self) -> bytes:
+        self._ensure_dir()
+        if self.device_key_file.exists():
+            raw = self.device_key_file.read_bytes()
+            if raw:
+                return raw
+        raw = os.urandom(32)
+        self.device_key_file.write_bytes(raw)
+        try:
+            os.chmod(self.device_key_file, 0o600)
+        except Exception:
+            pass
+        return raw
+
     def _derive_key(self, username: str, salt: bytes) -> bytes:
         if PBKDF2HMAC is None or hashes is None:
             raise RuntimeError("缺少 cryptography 依赖库，请运行 pip install cryptography 后重试。")
-        seed = f"{platform.system()}|{platform.node()}|{uuid.getnode()}|{username}".encode("utf-8")
+        seed = f"{platform.system()}|{platform.node()}|{uuid.getnode()}|{username}".encode("utf-8") + self._device_secret()
         kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=PBKDF2_ITERATIONS)
         return base64.urlsafe_b64encode(kdf.derive(seed))
 
@@ -884,7 +899,6 @@ class IHDUUiApp:
             }
         )
         self.store.set_password(username, password)
-        password = ""
         self.password_var.set("")
         try:
             self.autostart.set_enabled(bool(self.autostart_var.get()))
