@@ -13,7 +13,7 @@ def main() -> int:
     command = [
         sys.executable,
         "-m",
-        "PyInstaller",
+        "pyinstaller",
         "--noconfirm",
         "--clean",
         "--onefile",

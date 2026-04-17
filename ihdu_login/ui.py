@@ -508,7 +508,7 @@ class IHDUUiApp:
             fill="#2563eb",
         )
         text = "H"
-        font = ImageFont.load_default() if ImageFont is not None else None
+        font = ImageFont.load_default() if ImageFont else None
         try:
             text_box = draw.textbbox((0, 0), text, font=font)
             text_width = text_box[2] - text_box[0]
@@ -569,4 +569,3 @@ def run_ui(headless: bool = False) -> int:
     app = IHDUUiApp(headless=headless)
     app.run()
     return 0
-
