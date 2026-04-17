@@ -25,7 +25,7 @@ def main() -> int:
     password = ""
     if args.command in {"login", "watch"}:
         username = args.username or input("请输入校园网账号: ").strip()
-        password = args.password if args.password is not None else getpass.getpass("请输入校园网密码: ").strip()
+        password = args.password or getpass.getpass("请输入校园网密码: ").strip()
         if not username or not password:
             raise SystemExit("账号或密码为空，无法继续登录。")
 
@@ -56,4 +56,3 @@ def main() -> int:
     except Exception as exc:
         print(f"操作失败：{exc}", file=sys.stderr)
         return 1
-
