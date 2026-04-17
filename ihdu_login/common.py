@@ -474,5 +474,3 @@ class IHDUClient:
             except Exception as exc:
                 print(f"[{time.strftime('%H:%M:%S')}] 发生错误：{exc}", file=sys.stderr)
             time.sleep(interval)
-
-
