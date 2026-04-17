@@ -24,6 +24,21 @@ cd iHDU-Login
 pip install -r requirements.txt
 ```
 
+如需本地打包 EXE，再安装构建依赖：
+
+```bash
+pip install -r requirements-build.txt
+```
+
+## 模块结构
+
+项目已拆分为多脚本模块化管理：
+
+- `ihdu_login/common.py`：核心认证流程（challenge / 加密 / 登录 / 状态 / Wi-Fi）
+- `ihdu_login/ui.py`：桌面 UI、凭据存储、后台轮询、托盘、自启
+- `ihdu_login/cli.py`：命令行参数与子命令分发
+- `ihdu_cli.py`：兼容入口（薄封装）
+
 ## 使用
 
 ### 可视化 UI（推荐）
@@ -112,6 +127,16 @@ A: 不会。程序优先保存到系统钥匙串（`keyring`）；钥匙串不�
 **Q: 托盘功能不可用怎么办？**
 
 A: 请确认已安装 `pystray` 和 `Pillow`，并且系统桌面环境支持托盘图标。
+
+**Q: 能不能给不装 Python 的同学直接使用？**
+
+A: 可以。你可以在 Windows 上打包 EXE 后分发：
+
+```bash
+python build_exe.py
+```
+
+打包完成后可执行文件位于 `dist/iHDU-Login.exe`。
 
 ## 工作原理
 
