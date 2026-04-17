@@ -333,7 +333,7 @@ def ensure_wifi_connected(ssid: str) -> bool:
         return True
 
     if shutil.which("nmcli") is None:
-        raise RuntimeError("系统中未找到命令 nmcli，无法自动连接 Wi-Fi。")
+        raise RuntimeError("系统中未找到命令 `nmcli`，无法自动连接 Wi-Fi。")
     result = run_command(["nmcli", "device", "wifi", "connect", ssid])
     if result.returncode != 0:
         raise RuntimeError(f"连接 Wi-Fi 失败：{result.stderr.strip() or result.stdout.strip()}")
